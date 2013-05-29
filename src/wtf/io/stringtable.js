@@ -13,7 +13,6 @@
 
 goog.provide('wtf.io.StringTable');
 
-goog.require('goog.asserts');
 goog.require('goog.async.Deferred');
 
 
@@ -21,21 +20,11 @@ goog.require('goog.async.Deferred');
 /**
  * Simple read-only or write-only string table.
  * Strings are stored by ordinal in the order they are added.
- * The string table is switched into a mode upon creation that optimizes its
- * behavior for reading or writing.
- * @param {wtf.io.StringTable.Mode} mode Operation mode.
  * @constructor
  */
-wtf.io.StringTable = function(mode) {
+wtf.io.StringTable = function() {
   // TODO(benvanik): add de-duplication, if possible to do efficiently. Perhaps
   //     only for large strings where the cost is worth it?
-
-  /**
-   * Operation mode. Cannot be changed.
-   * @type {wtf.io.StringTable.Mode}
-   * @private
-   */
-  this.mode_ = mode;
 
   /**
    * All currently added string values.
@@ -48,20 +37,12 @@ wtf.io.StringTable = function(mode) {
 
 
 /**
- * String table mode.
- * @enum {number}
- */
-wtf.io.StringTable.Mode = {
-  READ_ONLY: 0,
-  WRITE_ONLY: 1
-};
-
-
-/**
  * Resets all string table data.
  */
 wtf.io.StringTable.prototype.reset = function() {
-  this.values_ = [];
+  if (this.values_.length) {
+    this.values_ = [];
+  }
 };
 
 
@@ -70,7 +51,7 @@ wtf.io.StringTable.prototype.reset = function() {
  * @return {!wtf.io.StringTable} New string table.
  */
 wtf.io.StringTable.prototype.clone = function() {
-  var other = new wtf.io.StringTable(this.mode_);
+  var other = new wtf.io.StringTable();
   other.values_ = this.values_.slice();
   return other;
 };
@@ -82,7 +63,6 @@ wtf.io.StringTable.prototype.clone = function() {
  * @return {number} Ordinal value.
  */
 wtf.io.StringTable.prototype.addString = function(value) {
-  goog.asserts.assert(this.mode_ == wtf.io.StringTable.Mode.WRITE_ONLY);
   var ordinal = this.values_.length / 2;
   this.values_.push(value);
   this.values_.push('\0');
@@ -96,21 +76,47 @@ wtf.io.StringTable.prototype.addString = function(value) {
  * @return {string?} String value, if present.
  */
 wtf.io.StringTable.prototype.getString = function(ordinal) {
-  goog.asserts.assert(this.mode_ == wtf.io.StringTable.Mode.READ_ONLY);
-  return this.values_[ordinal] || null;
+  return this.values_[ordinal * 2] || null;
 };
 
 
 /**
- * Deserializes a string table from the given data blob.
+ * Deserializes the string table from the given JSON object.
+ * @param {!(Array|Object)} value JSON object.
+ */
+wtf.io.StringTable.prototype.initFromJsonObject = function(value) {
+  // Need to expand from delimiterless version.
+  this.values_ = new Array(value.length * 2);
+  for (var n = 0; n < this.values_.length; n += 2) {
+    this.values_[n] = value[n / 2];
+    this.values_[n + 1] = '\0';
+  }
+};
+
+
+/**
+ * Serializes the string table to a JSON object.
+ * @return {!(Array|Object)} String table object.
+ */
+wtf.io.StringTable.prototype.toJsonObject = function() {
+  // Unfortuantely have to do this to add the \0 delimiters.
+  // Since JSON isn't the optimized format, this is ok.
+  var values = new Array(this.values_.length / 2);
+  for (var n = 0; n < values.length; n++) {
+    values[n] = this.values_[n * 2];
+  }
+  return values;
+};
+
+
+/**
+ * Deserializes the string table from the given data blob.
  * The blob is espected to have the frame header omitted.
  * @param {!Blob} blob Blob, sliced to only be string data.
  * @return {!goog.async.Deferred} A deferred fulfilled when the table is
  *     deserialized.
  */
 wtf.io.StringTable.prototype.deserialize = function(blob) {
-  goog.asserts.assert(this.mode_ == wtf.io.StringTable.Mode.READ_ONLY);
-
   // NOTE: we avoid using goog.fs as it is very bad for performance.
 
   var deferred = new goog.async.Deferred();
@@ -128,13 +134,11 @@ wtf.io.StringTable.prototype.deserialize = function(blob) {
 
 
 /**
- * Serializes a string table to a blob.
+ * Serializes the string table to a blob.
  * The resulting blob does not have a frame header.
  * @return {!Blob} Blob containing the string data.
  */
 wtf.io.StringTable.prototype.serialize = function() {
-  goog.asserts.assert(this.mode_ == wtf.io.StringTable.Mode.WRITE_ONLY);
-
   var blob = new Blob(this.values_);
   return blob;
 };
